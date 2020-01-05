@@ -87,3 +87,54 @@ times 510 -( $ - $$ ) db 0              ;When compiled , our program must fit in
                                         ; enough zero bytes ( db 0) to bring us to the 510 th byte.
 dw 0 xaa55                              ; Last two bytes ( one word ) form the magic number ,
                                         ; so BIOS knows we are a boot sector.
+
+assemble using $nasm boot_sect.asm -f bin -o boot_sect.bin
+run $qemu-system-x86_64 boot_sect.bin to see if it loops correctly 
+run $od -t x1 -A n boot_sect.bin to see the actual machine code which we wrote earlier (od is octal dump)
+
+16 BIT REAL MODE Vs 32 BIT PROTECTION MODE
+For backward compatibility, it is important that CPUs boot initially in 16-bit
+real mode, requiring modern operating systems explicitly to switch up into the more
+advanced 32-bit (or 64-bit) protected mode, but allowing older operating systems to
+carry on, blissfully unaware that they are running on a modern CPU. Later on, we will
+look at this important step from 16-bit real mode into 32-bit protected mode in detail.
+
+TO PRINT A LETTER ON THE DEVICE SCREEN USING BOOT-SECTOR PROGRAM
+We take the help of BIOS here, because it is the only one software right now that uses the display device for basic testing operations. But how to gethold of this BIOS code? We use interrupts!!
+
+***
+
+Interrupts are a mechanism that allow the CPU temporarily to halt what it is doing and
+run some other, higher-priority instructions before returning to the original task.
+
+Each interrupt is represented by a unique number that is an index to the interrupt
+vector, a table initially set up by BIOS at the start of memory (i.e. at physical address
+0x0) that contains address pointers to interrupt service routines (ISRs). An ISR is simply
+a sequence of machine instructions, much like our boot sector code, that deals with a
+specific interrupt (e.g. perhaps to read new data from a disk drive or from a network
+card).
+So, in a nutshell, BIOS adds some of its own ISRs to the interrupt vector that
+specialise in certain aspects of the computer, for example: interrupt 0x10 causes the
+screen-related ISR to be invoked; and interrupt 0x13, the disk-related I/O ISR.
+However, it would be wasteful to allocate an interrupt per BIOS routine, so BIOS
+multiplexes the ISRs by what we could imagine as a big switch statement, based usually
+on the value set in one of the CPUs general purpose registers, ax, prior to raising the
+interrupt.
+
+***
+
+CPU REGISTERS
+
+All x86 CPUs have four general purpose registers,
+ax, bx, cx, and dx, for exactly that purpose. Also, these registers, which can each hold
+a word (two bytes, 16 bits) of data, can be read and written by the CPU with negligible
+delay as compared with accessing main memory.
+
+mov ax,1234
+mov cx,0x234
+mox dx,'t'
+mov bx,ax
+
+
+So, recall that we’d like BIOS to print a character on the screen for us, and that we
+can invoke a specific BIOS routine by setting ax to some BIOS-defined value and then triggering a specific interrupt. The specific routine we want is the BIOS scrolling tele-type routine, which will print a single character on the screen and advance the cursor, ready for the next character.
