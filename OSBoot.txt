@@ -138,3 +138,60 @@ mov bx,ax
 
 So, recall that we’d like BIOS to print a character on the screen for us, and that we
 can invoke a specific BIOS routine by setting ax to some BIOS-defined value and then triggering a specific interrupt. The specific routine we want is the BIOS scrolling tele-type routine, which will print a single character on the screen and advance the cursor, ready for the next character.
+
+There is a whole list of BIOS routines published that show
+you which interrupt to use and how to set the registers prior to the interrupt. Here, we
+need interrupt 0x10 and to set ah to 0x0e (to indicate tele-type mode) and al to the
+ASCII code of the character we wish to print.
+
+(Refer hello.asm for code details)
+
+MEMORY, ADDRESSES AND LABELS
+We said earlier how the CPU fetches and executes instructions from memory, and how it
+was BIOS that loaded our 512-byte boot sector into memory and then, having finished
+its initialisations, told the CPU to jump to the start of our code, whereupon it began
+executing our first instruction, then the next, then the next, etc.
+So our boot sector code is somewhere in memory; but where?
+**As it turns out, BIOS likes always to load the boot sector to the address '0x7c00',
+where it is sure will not be occupied by important routines.**
+
+(REFER helloworld.asm)
+
+In the assembler we can define a string as follows:
+my_string :
+db ’ Booting OS ’
+We’ve actually already seen db, which translates to “declare byte(s) of data”, which tells
+the assembler to write the subsequent bytes directly to the binary output file
+
+the convention is to declare strings
+as null-terminating, which means we always declare the last byte of the string as 0, as
+follows:
+my_string :
+db ’ Booting OS ’ ,0
+When later iterating through a string, perhaps to print each of its characters in turn, we
+can easily determine when we have reached the end.
+
+
+USING THE STACK
+The stack is really just a simple solution to the following
+inconvenience: the CPU has a limited number of registers for the temporary storage of
+our routine’s local variables, but we often need more temporary storage than will fit into
+these registers; now, we can obviously make use of main memory, but specifying specific
+memory addresses when reading and writing is inconvenient, especially since we do not
+care exactly where the data is to be stored, only that we can retrieve it easily enough.
+And, as we shall see later, the stack is also useful for argument passing to realise function
+calls.
+So, the CPU offers two instructions push and pop that allow us, respectively, to store
+a value and retrieve a value from the top of the stack, and so without worrying exactly
+where they are stored.
+Stack is implemented by two special CPU registers, 'bp' and 'sp', which maintain
+the addresses of the stack base (i.e. the stack bottom) and the stack top respectively.
+Since the stack expands as we push data onto it, we usually set the stack’s base far away
+from important regions of memory (e.g. such as BIOS code or our code) so their is no
+danger of overwriting if the stack grows too large. One confusing thing about the stack
+is that it actually grows downwards from the base pointer, so when we issue a push,
+the value actually gets stored below --- and not above --- the address of bp, and sp is
+decremented by the value’s size.
+
+(REFER TO stack.asm)
+
