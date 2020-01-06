@@ -195,3 +195,117 @@ decremented by the value’s size.
 
 (REFER TO stack.asm)
 
+CONTROL STRUCTURES
+After compilation, these high-level control structures reduce to simple jump state-
+ments. Actually, we’ve already seen the simplest example of loops:
+
+some_label:
+    jmp some_label ;jumps to the address of the label
+
+jmp $ ;jumps to address of the current instruction
+So this instruction offers us an unconditional jump (i.e. it will always jump); but we
+often need to jump based on some condition (e.g. carry on looping until we have looped
+ten times, etc.).
+
+Conditional jumps are achieved in assembly language by first running a comparison
+instruction, then by issuing a specific conditional jump instruction.
+
+cmp ax,4 ;compare the value in ax to 4
+je then_block ;jump to then label if above is equal
+mov bx,45 ; if not equal move 45 to bx
+jmp the_end ;jump to the_end label
+
+then_block:
+    mov bx,23
+the_end:
+
+In a language such as C or Java, this would look like this:
+if ( ax == 4) {
+bx = 23;
+} else {
+bx = 45;
+}
+
+We can see from the assembly example that there is something going on behind the
+scenes that is relating the cmp instruction to the je instruction it proceeds. This is an
+example of where the CPU’s special flags register is used to capture the outcome of
+the cmp instruction, so that a subsequent conditional jump instruction can determine
+whether or not to jump to the specified address.
+
+Other Jump statements available:
+je
+jne
+jl
+jle
+jg
+jge
+
+CALLING FUNCTIONS
+At the CPU level a function is
+nothing more than a jump to the address of a useful routine then a jump back again to
+the instruction immediately following the first jump.
+Functions can be seen something like this:
+......
+......
+mov al, 'H'
+jmp my_print_function
+return_to_here:
+....
+....
+....
+....
+
+my_print_function:
+mov ah,0x0e
+int 0x10
+jmp return_to_here
+
+Note how we used the register al as a parameter, by setting it up ready for
+the function to use. This is how parameter passing is made possible in higher level
+languages, where the caller and callee must have some agreement on where and how
+many parameters will be passed.
+
+Borrowing from the parameter passing idea, the caller code could store the correct
+return address (i.e. the address immediately after the call) in some well-known location,
+then the called code could jump back to that stored address.
+
+The CPU keeps track of the
+current instruction being executed in the special register ip (instruction pointer), which,
+sadly, we cannot access directly. However, the CPU provides a pair of instructions, call
+and ret, which do exactly what we want: call behaves like jmp but additionally, before
+actually jumping, pushes the return address on to the stack; ret then pops the return
+address off the stack and jumps to it, as follows:
+
+mov al , ’H ’; Store ’H ’ in al so our function will print it.
+call my_print_function
+...
+...
+my_print_function :
+mov ah , 0x0e
+int 0x10
+ret
+
+
+The above function called may try to change the value of the registers also, since registers are scarce resource. Thus it is good to push the previous value of the registers to the stack and then pull it out after the function is over.
+'pusha' and 'popa' helps to push and pop all register values to the stack.
+....
+....
+some_function :
+pusha
+mov bx , 10
+add bx , 20
+mov ah , 0 x0e
+int 0 x10
+popa
+ret 
+
+
+INCLUDE FILES
+After slaving away even on the seemingly simplest of assembly routines, you will likely
+want to reuse your code in multiple programs. nasm allows you to include external files
+literally as follows:
+% include " my_print_function.asm " ; this will simply get replaced by
+                                    ; the contents of the file
+
+mov al , ’H ’; Store ’H ’ in al so our function will print it.
+call my_print_function
