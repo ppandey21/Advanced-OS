@@ -309,3 +309,128 @@ literally as follows:
 
 mov al , ’H ’; Store ’H ’ in al so our function will print it.
 call my_print_function
+
+
+
+
+READING FROM THE DISK
+We have a little problem that poses to get in the way of our
+plan to write an operating system: BIOS loaded our boot code from the first sector of
+the disk, but that is all it loaded; what if our operating system code is larger --- and I’m
+guessing it will be --- than 512 bytes.
+Operating systems usually don’t fit into a single (512 byte) sector, so one of the first
+things they must do is bootstrap the rest of their code from the disk into memory and
+then begin executing that code. Luckily, as was hinted at earlier, BIOS provides routines
+that allow us to manipulate data on the drives.
+
+EXTENDED MEMORY USING SEGMENTS
+CPU designers in x86 have given 4 segment registers- ds(data segment), cs, ss(stack segment), es.
+If we use such segments then the address that will be used to print the data will be 16*segment_address+relocatable address of the register.
+For example:
+
+;
+; A simple boot sector program that demonstrates segment offsetting
+;
+mov ah , 0x0e; int 10/ ah = 0 eh -> scrolling teletype BIOS routine
+mov al , [ the_secret ]
+int 0x10; Does this print an X?
+mov bx , 0x7c0
+mov ds , bx; Can ’t set ds directly , so set bx
+mov al , [ the_secret ]; then copy bx to ds.
+int 0x10; Does this print an X?
+mov al , [ es : the_secret ] ; Tell the CPU to use the es ( not ds ) segment.
+int 0 x10; Does this print an X?
+mov bx , 0x7c0
+mov es , bx
+mov al , [ es : the_secret ]
+int 0x10; Does this print an X?
+jmp $; Jump forever.
+the_secret :
+db " X "
+; Padding and magic BIOS number.
+times 510 -( $ - $$ ) db 0
+dw 0xaa55
+
+What happens here?
+Because we do not use the
+org directive, the assmebler does not offset our labels to the correct memory locations
+when the code is loaded by BIOS to the address 0x7c00, so the first attempt to print an
+’X’ will fail. However, if we set the data segment register to 0x7c0, the CPU will do this
+offset for us (i.e. 0x7c0 * 16 + the secret), and so the second attempt will correctly
+print the ’X’. In the third and fourth attempts we do the same, and get the same results,
+but instead explicitly state to the CPU which segment register to use when computing
+the physical address, using instead the general purpose segment register es.
+
+Note: 0x4d*16=0x4d0
+
+So, segment-based addressing allows us to reach further into memory, up to a little
+over 1 MB (0xffff * 16 + 0xffff). Later, we will see how more memory can be accessed,
+when we switch to 32-bit protected mode, but for now it suffices for us to understand
+16-bit real mode segment-based addressing.
+
+HOW DISK DRIVES WORK?
+It is important to be able to describe
+the exact place on the disk’s surface where some state is to be read or written, and
+so Cylinder-Head-Sector (CHS) addressing is used, which effectively is a 3D coordinate
+system.
+• Cylinder: the cylinder describes the head’s discrete distance from the outer edge
+of the platter and is so named since, when several platters are stacked up, you
+can visualise that all of the heads select a cylinder through all of the platters
+• Head: the head describes which track (i.e. which specific platter surface within
+the cylinder) we are interested in.
+• Sector: the circular track is divided into sectors, usually of capacity 512 bytes,
+which can be referenced with a sector index.
+
+Using BIOS to Read the Disk
+BIOS can offer few disk routines that abstract all these differences for common disk devices.
+It should look for different disk variants and usb/sata/scsi/.
+
+The specific BIOS routine we are interested in here is accessed by raising interrupt
+0x13 after setting the register al to 0x02. This BIOS routine expects us to set up a few
+other registers with details of which disk device to use, which blocks we wish to read
+from the disk, and where to store the blocks in memory. The most difficult part of using
+this routine is that we must specify the first block to be read using a CHS addressing
+scheme; otherwise, it is just a case of filling in the expected registers, as detailed in the
+next code snippet.
+
+mov ah, 0x02; BIOS read sector function
+mov dl, 0; Read drive 0 (i.e. first floppy drive)
+mov ch, 3; Select cylinder 3
+mov dh, 1; Select track on 2nd side of floppy
+         ; disk, since this count has a base of 0
+mov cl, 4; Select the 4th sector on the track- not
+         ; the 5th, since this has a base of 1
+mov al, 5; Read 5 sectors from the start point
+
+; Lastly, set the address that we'd like BIOS to read the 
+; sectors to, which BIOS expects to find in ES:BX
+; (i.e. segment ES with offset BX).
+mov bx, 0xa000; Indirectly set ES to 0xa000
+mov es, bx
+mov bx, 0x1234; Set BX to 0x1234
+;In our case, data will be read to 0xa000:0x1234, which the
+; CPU will translate to physical address 0xa1234
+int 0x13; Now the issue the BIOS interrupt to do the actual read.
+  
+BIOS updates some registers to let us know what happened: the carry
+flag (CF) of the special flags register is set to signal a general fault, and al is set to the
+number of sectors actually read, as opposed to the number requested. After issuing the
+interrupt for the BIOS disk read, we can perform a simple check as follows: 
+
+...
+...
+int 0x13; Issue the BIOS interrupt to do the actual read
+jc read_error; jc is another jumping instruction , that jumps
+             ; only if the carry flag was set.
+; This jumps if what BIOS reported as the number of sectors
+; actually read in AL is not equal to the number we expected.
+cmp al, <no. of sectors expected>
+jne disk_error
+
+disk_error:
+   mov bx , DISK_E RROR_MS G
+   call print_string
+   jmp $
+; Global variables
+DISK _ERROR_M SG : db " Disk read error ! " , 0
+
