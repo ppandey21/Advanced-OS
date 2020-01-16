@@ -1,0 +1,343 @@
+UNDERSTANDING C COMPILATION
+
+Generating raw machine code
+
+int my_function () {
+return 0 xbaba ;
+}//basic.c
+
+$gcc -ffreestanding -c basic.c -o basic.o
+
+This will produce an object file, which, being completely unrelated, is not to be con-
+fused with the concept of object-oriented programming. Rather than compiling directly
+into machine code, the compiler outputs annotated machine code, where meta informa-
+tion, such as textual labels, that are redundant for execution, remain present to enable
+more flexibilty in how the code is eventually put together. One big advantage of this
+intermediary format is that the code may be easily relocated into a larger binary file
+when linked in with routines from other routines in other libraries, since code in the
+object file uses relative rather than absolute internel memory references.
+
+$objdump -d basic.o
+basic.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <my_function>:
+   0:	55			push   %rbp
+   1:	48 89 e5		mov    %rsp,%rbp
+   4:	b8 ba ba 00 00		mov    $0xbaba,%eax
+   9:	5d			pop    %rbp
+   a:	c3			retq 
+
+Note that
+we can see some assembly instructions and some additional details about the code.
+
+In order to create the actual executable code (i.e. that will run on our CPU),
+we have to use a linker, whose role is to link together all of the routines described in
+the input object files into one executable binary file, effectively stitching them together
+and converting those relative addresses into absolute addresses within the aggregated
+machine code, for example: call <function X label> will become call 0x12345,
+where 0x12345 is the offset within the output file that the linker decided to place the
+code for the routine denoted by function X label.
+
+In our case, though, we do not want to link with any routines from any other object
+files --- we will look at this shortly --- but nevertheless the linker will convert our anno-
+tated machine code file into a raw machine code file. To output raw machine code into
+a file basic.bin, we can use the following command:
+
+$ld -o basic.bin -Ttext 0x0 --oformat binary basic.o
+
+Note that, like the compiler, the linker can output executable files in various for-
+mats, some of which may retain meta data from the input object files. This is useful
+for executables that are hosted by an operating system, such as the majory of programs
+we will write on a platform such as Linux or Windows, since meta data can be retained
+to describe how those applications are to be loaded into memory; and for debugging
+purposes, for example: the information that a process crashed at instruction address
+0x12345678 is far less useful to a programmer than information presented using redun-
+dant, non-executable meta-data that a process crashed in function my function, file
+basic.c, on line 3.
+Anyhow, since we are interested in writing an operating system, it would be no good
+trying to run machine code intermingled with meta data on our CPU, since unaware the
+CPU will execute every byte as machine code. This is why we specify an output format
+of (raw) binary.
+
+The other option we used was -Ttext 0x0, which works in the same way as the org
+directive we used in our earlier assembly routines, by allowing us to tell the compiler
+to offset label addresses in our code to their absolute memory addresses when later loaded
+to a specific origin in memory.
+
+Now we have successfully compiled the C code into a raw machine code file.
+
+$ndisasm -b 32 basic.bin > basic.dis
+
+Use the above disassembler to disassemble this.
+
+00000000  55                push ebp
+00000001  48                dec eax
+00000002  89E5              mov ebp,esp
+00000004  B8BABA0000        mov eax,0xbaba
+00000009  5D                pop ebp
+0000000A  C3                ret
+
+Although our function does a very simple thing, there
+is some addtional code in there that seems to be manipulating the stack’s base and top
+registers, ebp and esp. C makes heavy use of the stack for storing variables that are
+local to a function (i.e. variables that are no-longer needed when the function returns),
+so upon entering a function, the stack’s base pointer (ebp) is increased to the current
+top of the stack (mov ebp, esp), effectively creating a local, initially empty stack above
+the stack of the function that called our function. This process is often referred to as
+the function setting up its stack frame, in which it will allocate any local variables.
+However, if prior to returning from our function we failed to restore the stack frame to
+that originally set up by our caller, the calling function would get in a real mess when
+trying to access its local variables; so before updating the base pointer for our stack
+frame, we must store it, and there is no better place to store it than the top of the stack
+(push ebp).
+
+After preparing our stack frame, which, sadly, doesn’t actually get used in our simple
+function, we see how the compiler handles the line return 0xbaba;: the value 0xbaba is
+stored in the 32-bit register eax, which is where the calling function (if there were one)
+would expect to find the returned value, similarly to how we had our own convention of
+using certain registers to pass arguments to our earlier assembly routines, for example:
+our print string routine expected to find the address of the string to be printed in the
+register bx.
+Finally, before issuing ret to return to the caller, the function pops the original stack
+base pointer off the stack (pop ebp), so the calling function will be unaware that its own
+stack frame was ever changed by the called function. Note that we didn’t actuall change
+the top of the stack (esp), since in this case our stack frame was used to store nothing,
+so the untouched esp register did not require restoring.
+
+LOCAL VARIABLES
+
+// Declare a local variable .
+int my_function () {
+int my_var = 0 xbaba ;
+return my_var ;
+}//local_var.c
+
+
+
+
+
+nly difference now is that we actually allocate a local variable, my var, but
+this provokes an interesting response from the compiler. As before, the stack frame is
+established, but then we see sub esp, byte +0x10, which is subtracting 16 (0x10) bytes
+from the top of the stack. Firstly, we have to (constantly) remind ourselves that the stack
+grows downwards in terms of memory addresses, so in simpler terms this instructions
+means, ’allocate another 16 bytes on the top of stack’. We are storing an int, which is
+a 4-byte (32-bit) data type, so why have 16 bytes been allocated on the stack for this
+variable, and why not use push, which allocates new stack space automatically? The
+reason the compiler manipulates the stack in this way is one of optimsation, since CPUs
+often operate less efficiently on a datatype that is not aligned on memory boundaries that
+are multiples of the datatype’s size [?]. Since C would like all variables to be properly
+aligned, it uses the maximum datatype width (i.e. 16 bytes) for all stack elements, at
+the cost of wasting some memory.
+The next instruction, mov dword [ebp-0x4],0xbaba, actually stores our variable’s
+value in the newly allocated space on the stack, but without using push, for the previously
+given reason of stack efficiency (i.e. the size of the datatype stored is less than the stack
+space reserved). We understand the general use of the mov instruction, but two things
+that deserve some explanation here are the use of dword and [ebp-0x4]:
+• dword states explicitly that we are storing a double word (i.e. 4 bytes) on the
+stack, which is the size of our int datatype. So the actual bytes stored would
+be 0x0000baba, but without being explicit could easily be 0xbaba (i.e. 2 bytes)
+or 0x000000000000baba (i.e. 8 bytes), which, although the same value, have
+different ranges.
+• [ebp-0x4] is an example of a modern CPU shortcut called effective address com-
+putation [?], which is more impressive that the assembly code seems to reflect.
+This part of the instruction references an address that is calculated on-the-fly by
+the CPU, based on the current address of register ebp. At a glance, we might
+think our assembler is manipulating a constant value, as it would if we wrote
+something like this mov ax, 0x5000 + 0x20, where our assembler would simply
+pre-process this into mov ax, 0x5020. But only once the code is run would the
+value of any register be known, so this definitely is not pre-processing; it forms a
+part of the CPU instruction. With this form of addressing the CPU is allowing
+us to do more per instruction cycle, and is good example of how CPU hardware
+has adapted to better suit programmers. We could write the equivalent, without
+such address manipulation, less efficiently in the following three lines of code:
+
+mov eax , ebp
+sub eax , 0x4
+mov [ eax ] , 0xbaba
+
+So the value 0xbaba is stored directly to the appropriate position of the stack, such that
+it will occupy the first 4 bytes above (though physically below, since the stack grows
+downwards) the base pointer.
+
+Now, being a computer program, our compiler can distinguish different numbers as
+easily as we can distinguish different variable names, so what we think of as the variable
+my var, the compiler will think of as the address ebp-0x4 (i.e. the first 4 bytes of the
+stack). We see this in the next instruction, mov eax,[ebp-0x4], which basically means,
+’store the contents of my var in eax’, again using efficiently address computation; and
+we know from the previous function that eax is used to return a variable to the caller of
+our function.
+Now, before the ret instruction, we see something new: the leave instruction.
+Actually, the leave instruction is an alternative to the following steps, that restore the
+original stack of the caller, recipricol of the first two instruction of the function:
+
+mov esp , ebp
+pop ebp
+
+CALLING FUNCTION
+
+void caller_function() {
+callee_function(0xdede);
+}
+int callee_function(int my_arg) {
+return my_arg ;
+}
+
+On disassembling the above C code-
+
+00000000  55                push ebp
+00000001  48                dec eax
+00000002  89E5              mov ebp,esp
+00000004  BFDEDE0000        mov edi,0xdede
+00000009  B800000000        mov eax,0x0
+0000000E  E803000000        call dword 0x16
+00000013  90                nop
+00000014  5D                pop ebp
+00000015  C3                ret
+00000016  55                push ebp
+00000017  48                dec eax
+00000018  89E5              mov ebp,esp
+0000001A  897DFC            mov [ebp-0x4],edi
+0000001D  8B45FC            mov eax,[ebp-0x4]
+00000020  5D                pop ebp
+00000021  C3                ret
+
+
+The above can be understood easily now.
+
+
+USING POINTERS AND ADDRESS REFERENCING IN C
+
+void my_function () {
+char * my_string = " Hello " ;
+}
+
+consider the char pointer to a string
+Disassembling the above code we get,
+00000000  55                push ebp
+00000001  48                dec eax
+00000002  89E5              mov ebp,esp
+00000004  48                dec eax
+00000005  C745F80F000000    mov dword [ebp-0x8],0xf
+0000000C  90                nop
+0000000D  5D                pop ebp
+0000000E  C3                ret
+But look, there are five more instructions
+after the end of the function! What do you think the instruction dec eax is doing?
+Perhaps it decreases the value of eax by 1, but why? And what about the rest of the
+instructions?
+At times like this we need to do a sanity check, and remember that: the disasembler
+cannot distinguish between code and data; and somewhere in that code must be data
+for the string we defined. Now, we know that our function consists of the first half of
+the code, since these instructions made sense to us, and they ended with ret. If we now
+assume that the rest of the code is in fact our data, then the suspicious value, 0xf, that
+was stored in our variable makes sense, because it is the offset from the start of the code
+to where the data begins: our pointer variable is being set the the address of the data.
+To reassure our instincts, if we looked up in an ASCII table the character values of our
+string ‘‘Hello’’, we would find them to be 0x48, 0x65, 0x6c, 0x6c, and 0x6f. Now it
+is becoming clear, because if we look at the middle column of the disasembler output we
+see that these are the machine code bytes for those strange instructions that didn’t seem
+to make sense; we see also that the very last byte is 0x0, which C adds automatically to
+the end of strings, so that, like in our assembly routine print string, during processing
+we can easily determine when we reach the end of the string.
+
+EXECUTING OUR KERNEL CODE
+The involved steps are as follows:
+• Write and compile the kernel code.
+• Write and assemble the boot sector code
+• Create a kernel image that includes not only our boot sector but our compiled
+kernel code
+• Load our kernel code into memory
+• Switch to 32-bit protected mode
+• Begin executing our kernel code
+
+Write a code kernel.c (refer to kernel.c) and compile it.
+Compile this to raw binary as follows:
+$gcc -ffreestanding -c kernel.c -o kernel.o
+$ld -o kernel.bin -Ttext 0x1000 kernel.o --oformat binary
+Note that, now, we tell the linker that the origin of our code once we load it into
+memory will be 0x1000, so it knows to offset local address references from this origin,
+just like we use [org 0x7c00] in our boot sector, because that is where BIOS loads and
+then begins to exectute it.
+
+CREATING A BOOTSECTOR to BOOTSTRAP your KERNEL CODE
+Since the kernel was compiled as 32-bit instructions,
+we are going to have to switch into 32-bit protected mode before executing the kernel
+code.
+To simplfy the problem of which disk and from which sectors to load the kernel code,
+the boot sector and kernel of an operating system can be grafted together into a kernel
+image, which can be written to the initial sectors of the boot disk, such that the boot
+sector code is always at the head of the kernel image. Once we have compiled the boot
+sector described in this section, we can create our kernel image with the following file
+concatenation command:
+$cat boot_sect.bin kernel.bin > os-image
+
+(Refer to the kernel-bootloader bootstrap code)
+
+Finding our way into the kernel
+It was definitely a good idea to start with a very simple kernel, but by doing so we
+overlooked a potential problem: when we boot the kernel, recklessly we jumped to, and
+therefore began execution from, the first instruction of the kernel code;
+But C compiler can decide to place code and data whereever it chooses
+in the output file.
+
+void some_function () {
+}
+void main () {
+char * video_memory = 0 xb8000 ;
+* video_memory = ’X ’;
+// Call some function
+some_function ();
+}
+
+Suppose our code looks like the above code:
+Now, the compiler will likely precede the instructions of the intended entry function
+main by those of some function, and since our boot-strapping code will begin execution
+blindly from the first instruction, it will hit the first ret instruction of some function
+and return to the boot sector code without ever having entered main. The problem
+is, that entering our kernel in the correct place is too dependant upon the ordering of
+elemtents (e.g. functions) in our kernel’s source code and upon the whims of the compiler
+and linker, so we need to make this more robust.
+A trick that many operating systems use to enter the kernel correctly is to write a
+very simple assembly routine that is always attached to the start of the kernel machine
+code, and whose sole purpose is to call the entry function of the kernel. The reason
+assembly is used is because we know exactly how it will be translated in machine code,
+and so we can make sure that the first instruction will eventually result in the kernel’s
+entry function being reached.
+
+;kernel_entry.asm file-
+; Ensures that we jump straight into the kernel ’s entry function.
+[ bits 32]
+; We ’ re in protected mode by now , so use 32 - bit instructions.
+[ extern main ]
+; Declate that we will be referencing the external symbol ’ main ’,
+; so the linker can substitute the final address
+call main
+jmp $
+; invoke main () in our C kernel
+; Hang forever when we return from the kernel
+
+Previously we have compiled assembly into a raw binary format, because we wanted
+to run it as boot sector code on the CPU, but for this piece of code cannot stand alone,
+without having that label resolved, so we must compile it as follows as an object file,
+therefore preserving meta information about the labels it must resolve:
+$nasm kernel_entry.asm -f elf -o kernel entry.o
+
+
+The option -f elf tells the assembler to output an object file of the particular
+format Executable and Linking Format (ELF), which is the default format output by
+out C compiler.
+Now, rather that simple linking the kernel.o file with itself to create kernel.bin,
+we can link it with kernel entry.o, as follows:
+$ld -o kernel.bin -Ttext 0x1000 kernel entry.o kernel.o --oformat binary
+The linker respects the order of the files we gave to it on the command line, such
+that the previous command will ensure our kernel entry.o will precede the code in
+kernel.o.
+As before, we can reconstruct our kernel image file with the following command:
+cat boot sect.bin kernel.bin > os-image
+
+
+
